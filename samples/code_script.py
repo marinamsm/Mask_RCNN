@@ -9,7 +9,11 @@ import matplotlib.pyplot as plt
 import json
 from pycocotools.coco import COCO
 
-COCO = COCO('coco/annotations/instances_val2017.json')
+# COCO = COCO('coco/annotations/instances_val2017.json')
+
+YEAR = 2017
+IMAGE_PATH = "../../coco/{0}/images/".format(YEAR)
+COCO = COCO('../../coco/{0}/annotations/instances_val{0}.json'.format(YEAR))
 
 # Root directory of the project
 ROOT_DIR = os.path.abspath("../")
@@ -37,11 +41,13 @@ if not os.path.exists(COCO_MODEL_PATH):
 # Directory of images to run detection on
 IMAGE_DIR = os.path.join(ROOT_DIR, "samples/coco/images")
 
+
 class InferenceConfig(coco.CocoConfig):
     # Set batch size to 1 since we'll be running inference on
     # one image at a time. Batch size = GPU_COUNT * IMAGES_PER_GPU
     GPU_COUNT = 1
     IMAGES_PER_GPU = 1
+
 
 config = InferenceConfig()
 config.display()
@@ -84,17 +90,19 @@ image = skimage.io.imread(os.path.join(IMAGE_DIR, random.choice(file_names)))
 # Run detection
 results = model.detect([image], verbose=0)'''
 # print(img_ids)
-imgs = [COCO.loadImgs(img_ids[0])[0]]
+imgs = COCO.loadImgs(img_ids)
+total = len(imgs)
+print(total)
 results = []
-for img in imgs:
+for num, img in enumerate(imgs):
+    if (num + 1) % 100 == 0:
+        print('{} from {} images.'.format(num + 1, total))
     #out_scores, out_boxes, out_classes = predict(sess, os.path.join("", img['file_name']))
-    image = skimage.io.imread(os.path.join(IMAGE_DIR, img['file_name']))
-    # Run detection
+    image = skimage.io.imread(os.path.join(IMAGE_PATH, img['file_name']))
     r = model.detect([image], verbose=0)[0]
     '''print('R')
     print(r)'''
-
-    names = [class_names[index] for index in r['class_ids']]
+    names = [class_names[index - 1] for index in r['class_ids']]
     out_classes = [COCO.getCatIds(catNms=name)[0] for name in names]
     out_boxes = r['rois'].tolist()
     out_scores = r['scores'].tolist()
@@ -107,6 +115,10 @@ for img in imgs:
     print('img_id: ')
     print(img['id'])'''
     for i in range(len(out_scores)):
+        # top, left, bottom, right = box
+        y1, x1, y2, x2 = out_boxes[i]
+        x, y, w, h = x1, y1, x2 - x1, y2 - y1
+        out_boxes[i] = [x, y, w, h]
         result = {
             "image_id": img['id'],
             "category_id": out_classes[i],
@@ -114,7 +126,7 @@ for img in imgs:
             "score": float(out_scores[i])
         }
         results.append(result)
-#print(results)
+# print(results)
 with open("instances_val2017_results.json", "w") as f:
     json.dump(results, f)
 
@@ -124,5 +136,5 @@ with open("instances_val2017_results.json", "w") as f:
 #visualize.display_instances(image, r['rois'], r['masks'], r['class_ids'], class_names, r['scores'])
 #visualize.display_instances(image, r['rois'], r['masks'], r['class_ids'], class_names, r['scores'])
 #print(r['rois'], r['class_ids'], r['scores'])
-#print('RRRR')
-#print(results)
+# print('RRRR')
+# print(results)
