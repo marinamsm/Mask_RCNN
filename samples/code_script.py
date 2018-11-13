@@ -8,12 +8,15 @@ import matplotlib
 import matplotlib.pyplot as plt
 import json
 from pycocotools.coco import COCO
+import pickle as pickle
 
-# COCO = COCO('coco/annotations/instances_val2017.json')
+# COCO = COCO('coco/annotations/instances_train2014.json')
+# IMAGE_PATH = "G:\\images_train_2014\\train2014"
 
-YEAR = 2017
-IMAGE_PATH = "../../coco/{0}/images/".format(YEAR)
-COCO = COCO('../../coco/{0}/annotations/instances_val{0}.json'.format(YEAR))
+YEAR = 2014
+TYPE = 'val'
+IMAGE_PATH = "../../coco/{1}/{0}/images/".format(YEAR, TYPE)
+COCO = COCO('../../coco/{1}/{0}/annotations/instances_{1}{0}.json'.format(YEAR, TYPE))
 
 # Root directory of the project
 ROOT_DIR = os.path.abspath("../")
@@ -39,14 +42,14 @@ if not os.path.exists(COCO_MODEL_PATH):
     utils.download_trained_weights(COCO_MODEL_PATH)
 
 # Directory of images to run detection on
-IMAGE_DIR = os.path.join(ROOT_DIR, "samples/coco/images")
+#IMAGE_DIR = os.path.join(ROOT_DIR, "samples/coco/images")
 
 
 class InferenceConfig(coco.CocoConfig):
     # Set batch size to 1 since we'll be running inference on
     # one image at a time. Batch size = GPU_COUNT * IMAGES_PER_GPU
     GPU_COUNT = 1
-    IMAGES_PER_GPU = 1
+    IMAGES_PER_GPU = 8
 
 
 config = InferenceConfig()
@@ -89,52 +92,55 @@ img_ids = COCO.getImgIds()
 image = skimage.io.imread(os.path.join(IMAGE_DIR, random.choice(file_names)))
 # Run detection
 results = model.detect([image], verbose=0)'''
-# print(img_ids)
 imgs = COCO.loadImgs(img_ids)
 total = len(imgs)
 print(total)
 results = []
+i = 0
+batch_size = 8
+N = total
+while i < N:
+    # if i + inc > N/2:
+    #     inc = N/2 - i
+    if i % 1024 == 0:
+        print('{} from {} images.'.format(i, N))
+    batch = imgs[i:i + batch_size]
+    i += batch_size
+    images = [skimage.io.imread(os.path.join(IMAGE_PATH, img['file_name']))
+              for img in batch]
+    r = model.detect(images, verbose=0)
+    for ind in range(batch_size):
+        results.append(r[ind])
+
+'''
 for num, img in enumerate(imgs):
     if (num + 1) % 100 == 0:
         print('{} from {} images.'.format(num + 1, total))
+    if num + 1 > len(imgs)/2:
+        break
     #out_scores, out_boxes, out_classes = predict(sess, os.path.join("", img['file_name']))
     image = skimage.io.imread(os.path.join(IMAGE_PATH, img['file_name']))
     r = model.detect([image], verbose=0)[0]
-    '''print('R')
-    print(r)'''
+    results.append(r)
     names = [class_names[index - 1] for index in r['class_ids']]
     out_classes = [COCO.getCatIds(catNms=name)[0] for name in names]
     out_boxes = r['rois'].tolist()
     out_scores = r['scores'].tolist()
-    '''print("score: ")
-    print(out_scores)
-    print("boxes: ")
-    print(out_boxes)
-    print("class: ")
-    print(out_classes)
-    print('img_id: ')
-    print(img['id'])'''
     for i in range(len(out_scores)):
         # top, left, bottom, right = box
         y1, x1, y2, x2 = out_boxes[i]
         x, y, w, h = x1, y1, x2 - x1, y2 - y1
         out_boxes[i] = [x, y, w, h]
         result = {
-            "image_id": img['id'],
+			#image_id = name.split('.')[0], #rnn - mono2
+			#"image_id": img['id'], #mono1
+			"image_id": img['file_name'].split('.')[0],
             "category_id": out_classes[i],
             "bbox": out_boxes[i],
             "score": float(out_scores[i])
         }
         results.append(result)
+'''
 # print(results)
-with open("instances_val2017_results.json", "w") as f:
-    json.dump(results, f)
-
-
-# Visualize results
-#r = results[0]
-#visualize.display_instances(image, r['rois'], r['masks'], r['class_ids'], class_names, r['scores'])
-#visualize.display_instances(image, r['rois'], r['masks'], r['class_ids'], class_names, r['scores'])
-#print(r['rois'], r['class_ids'], r['scores'])
-# print('RRRR')
-# print(results)
+with open("coco_evaluation_val2014.pkl", "wb") as f:
+    pickle.dump(results, f)
