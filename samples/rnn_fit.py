@@ -1,5 +1,7 @@
 import os
 import sys
+import json
+import numpy as np
 from numpy import array
 from pickle import load
 from keras.preprocessing.text import Tokenizer
@@ -16,9 +18,17 @@ from keras.layers.merge import add
 from keras.callbacks import ModelCheckpoint
 from pycocotools.coco import COCO
 
-COCO = COCO('coco/annotations/captions_train2014.json')
+coco = COCO('coco/annotations/instances_train2014.json')
 IMAGE_PATH = "coco/images_train_2014/train2014"
 LAST_IMG_NUM = 41392
+
+def load_COCO_imgs():
+	cats = coco.loadCats(coco.getCatIds())
+	nms = [cat['name'] for cat in cats]
+	class_names = nms
+	catIds = coco.getCatIds(catNms=class_names)
+	img_ids = coco.getImgIds()
+	return coco.loadImgs(img_ids)
 
 # load doc into memory
 def load_doc(filename):
@@ -32,26 +42,32 @@ def load_doc(filename):
 
 # load a pre-defined list of photo identifiers
 def load_set(filename):
-	cats = COCO.loadCats(COCO.getCatIds())
-	nms = [cat['name'] for cat in cats]
-	class_names = nms
-	catIds = COCO.getCatIds(catNms=class_names)
-	img_ids = COCO.getImgIds()
-	imgs = COCO.loadImgs(img_ids)
+	imgs = load_COCO_imgs()
 	total = len(imgs)
 	dataset = []
-	# process line by line
-	for num, img in enumerate(imgs):
-		# skip empty lines
-		if num + 1 > LAST_IMG_NUM:
-			break
-		print('----')
-		print(num + 1)
-		# get the image identifier
-		identifier = img['file_name'].split('.')[0]
-		dataset.append(identifier)
-	return set(dataset)
+	imgsIds = []
+	i = 0
+	batch_size = 8
+	N = total/2
+	while i < N:
+		#if i % 1024 == 0:
+		#	print('{} from {} images.'.format(i, N))
+		batch = imgs[i:i + batch_size]
+		i += batch_size
+		# get the images identifiers
+		imagesNames = [img['file_name'].split('.')[0] for img in batch]
+		imagesIds = [img['id'] for img in batch]
+		for ind in range(len(imagesNames)):
+			dataset.append(imagesNames[ind])
+			imgsIds.append(imagesIds[ind])
+	return set(dataset), set(imgsIds)
 
+def concat_features_to_bboxes(features, bboxes):	
+	results = []
+	for ind in range(len(bboxes)):
+		results.append(np.append(features[ind], bboxes[ind].flatten()))
+	return results
+	
 # load clean descriptions into memory
 def load_clean_descriptions(filename, dataset):
 	# load document
@@ -63,7 +79,7 @@ def load_clean_descriptions(filename, dataset):
 		# split id from description
 		image_id, image_desc = tokens[0], tokens[1:]
 		# skip images not in the set
-		if image_id in dataset:
+		if int(image_id) in dataset:
 			# create list
 			if image_id not in descriptions:
 				descriptions[image_id] = list()
@@ -72,14 +88,6 @@ def load_clean_descriptions(filename, dataset):
 			# store
 			descriptions[image_id].append(desc)
 	return descriptions
-
-# load photo features
-def load_photo_features(filename, dataset):
-	# load all features
-	all_features = load(open(filename, 'rb'))
-	# filter features
-	features = {k: all_features[k] for k in dataset}
-	return features
 
 # covert a dictionary of clean descriptions to a list of descriptions
 def to_lines(descriptions):
@@ -102,6 +110,7 @@ def max_length(descriptions):
 
 # create sequences of images, input sequences and output words for an image
 def create_sequences(tokenizer, max_length, desc_list, photo):
+	#The parameter 'photo' contains the characteristics vector and photo's detections
 	X1, X2, y = list(), list(), list()
 	# walk through each description for the image
 	for desc in desc_list:
@@ -125,16 +134,18 @@ def create_sequences(tokenizer, max_length, desc_list, photo):
 def data_generator(descriptions, photos, tokenizer, max_length):
 	# loop for ever over images
 	while 1:
-		for key, desc_list in descriptions.items():
+		for ind in range(len(imgsIds)):
 			# retrieve the photo feature
-			photo = photos[key][0]
+			photo = photos[ind]
+			id = next(iter(imgsIds))
+			desc_list = descriptions[str(id)]
 			in_img, in_seq, out_word = create_sequences(tokenizer, max_length, desc_list, photo)
 			yield [[in_img, in_seq], out_word]
 
 # define the captioning model
 def define_model(vocab_size, max_length):
-	# feature extractor model 4096 for vgg16 and 4032 for nasnet
-	inputs1 = Input(shape=(4032,))
+	# 4632 features + detections
+	inputs1 = Input(shape=(4632,))
 	fe1 = Dropout(0.5)(inputs1)
 	fe2 = Dense(256, activation='relu')(fe1)
 	# sequence model
@@ -150,47 +161,53 @@ def define_model(vocab_size, max_length):
 	model = Model(inputs=[inputs1, inputs2], outputs=outputs)
 	model.compile(loss='categorical_crossentropy', optimizer='adam')
 	# summarize model
-	print(model.summary())
+	#model.summary()
 	# plot_model(model, to_file='model.png', show_shapes=True)
 	return model
 
 # train dataset
 
-# load training dataset (5K)
-filename = 'C:\\Users\\marin\\Desktop\\8_periodo\\Monografia\\Mask_RCNN\\samples\\coco\\images_train_2014\\train2014'
-train = load_set(filename)
-print('Dataset: %d' % len(train))
-'''
+# load training dataset (+/- 41K)
+imgsNames, imgsIds = load_set(IMAGE_PATH)
+print('Dataset: %d' % len(imgsIds))
+
 # descriptions
-train_descriptions = load_clean_descriptions('descriptions.txt', train)
-print('Descriptions: train=%d' % len(train_descriptions))
-# photo features
-train_features = load_photo_features('features.pkl', train)
-print('Photos: train=%d' % len(train_features))
+descriptions = load_clean_descriptions('COCO_descriptions_train2014.txt', imgsIds)
+print('Descriptions: %d' % len(descriptions))
+
+# photo features (extracted by NasNet)
+features = load(open('saidaDescritoresNasnet/featuresCocoTrain2014.pkl', 'rb'))
+print('Features: %d' % len(features))
+print(type(features))
+print(type(features[0]))
+print(features[0].shape) #(4032,)
+
+# photo bboxes (generated by Mask R-CNN)
+bboxes = load(open('saidaMaskRCNN/coco_evaluation_mrcnn_train2014.pkl', 'rb'))
+print('BBoxes: %d' % len(bboxes))
+print(type(bboxes))
+print(type(bboxes[0]))
+print(bboxes[0].shape) #(100,6) needs to be converted to 1D array
+
+#concat features and bboxes into 1D array
+rnn_input = concat_features_to_bboxes(features, bboxes)
+print('Input RNN: %d' % len(rnn_input))
+print(type(rnn_input))
+print(type(rnn_input[0]))
+print(rnn_input[0].shape) #(4632,)
+
 # prepare tokenizer
-tokenizer = create_tokenizer(train_descriptions)
+tokenizer = create_tokenizer(descriptions)
 vocab_size = len(tokenizer.word_index) + 1
 print('Vocabulary Size: %d' % vocab_size)
+
+
 # determine the maximum sequence length
-max_length = max_length(train_descriptions)
+max_length = max_length(descriptions)
 print('Description Length: %d' % max_length)
-# prepare sequences
-X1train, X2train, ytrain = create_sequences(tokenizer, max_length, train_descriptions, train_features)
 
-# dev dataset
-
-# load test set
-filename = '../Flickr8k_text/Flickr_8k.devImages.txt'
-test = load_set(filename)
-print('Dataset: %d' % len(test))
-# descriptions
-test_descriptions = load_clean_descriptions('descriptions.txt', test)
-print('Descriptions: test=%d' % len(test_descriptions))
-# photo features
-test_features = load_photo_features('features.pkl', test)
-print('Photos: test=%d' % len(test_features))
 # prepare sequences
-X1test, X2test, ytest = create_sequences(tokenizer, max_length, test_descriptions, test_features)
+X1train, X2train, ytrain = create_sequences(tokenizer, max_length, descriptions, rnn_input)
 
 # fit model
 
@@ -204,12 +221,13 @@ model = define_model(vocab_size, max_length)
 
 # train the model, run epochs manually and save after each epoch
 epochs = 20
-steps = len(train_descriptions)
+steps = len(descriptions)
 for i in range(epochs):
+	print("Epoch: ")
+	print(str(i + 1) + "/" + str(epochs))
 	# create the data generator
-	generator = data_generator(train_descriptions, train_features, tokenizer, max_length)
+	generator = data_generator(descriptions, rnn_input, tokenizer, max_length)
 	# fit for one epoch
 	model.fit_generator(generator, epochs=1, steps_per_epoch=steps, verbose=1)
 	# save model
-	model.save('model_' + str(i) + '.h5')
-'''
+	model.save('model_fine_tuned_COCO_train_2014' + str(i) + '.h5')
