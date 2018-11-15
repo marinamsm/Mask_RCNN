@@ -62,7 +62,7 @@ def save_descriptions(descriptions, filename):
 	file.write(data)
 	file.close()
 
-filename = 'coco/annotations/captions_train2014.json'
+filename = 'coco/annotations/captions_val2014.json'
 # parse descriptions
 descriptions = load_descriptions(filename)
 print('Loaded descriptions: %d ' % len(descriptions))
@@ -72,4 +72,4 @@ clean_descriptions(descriptions)
 vocabulary = to_vocabulary(descriptions)
 print('Vocabulary Size: %d' % len(vocabulary))
 # save to file
-save_descriptions(descriptions, 'COCO_descriptions_train2014.txt')
+save_descriptions(descriptions, 'COCO_descriptions_val2014.txt')
